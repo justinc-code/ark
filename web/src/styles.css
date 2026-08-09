@@ -69,9 +69,9 @@ button { color: inherit; }
 
 .section-title { display: flex; justify-content: space-between; align-items: center; margin: 30px 6px 11px; color: #8498a9; font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 9px; letter-spacing: .14em; text-transform: uppercase; }
 .section-title b { color: var(--blue-strong); font-size: 9px; }
-.contact-list { display: grid; gap: 4px; overflow-y: auto; }
+.contact-list { display: grid; gap: 4px; overflow-x: hidden; overflow-y: auto; }
 .contact { position: relative; width: 100%; display: grid; grid-template-columns: 21px 37px 1fr 7px; align-items: center; gap: 9px; min-height: 59px; padding: 8px; border: 1px solid transparent; border-radius: 11px; background: transparent; text-align: left; cursor: pointer; transition: background .16s, border-color .16s, transform .16s; }
-.contact:hover { border-color: var(--line); background: #f2f7fb; transform: translateX(2px); }
+.contact:hover { border-color: var(--line); background: #f2f7fb; }
 .contact.active { border-color: #b9d7eb; background: #e2f1fb; }
 .contact.active::before { content: ""; position: absolute; left: -1px; top: 12px; bottom: 12px; width: 3px; border-radius: 3px; background: var(--blue); }
 .contact-index { color: #9aabb8; font-family: ui-monospace, monospace; font-size: 8px; }

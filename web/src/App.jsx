@@ -38,14 +38,18 @@ function Avatar({ participant, small = false }) {
   );
 }
 
-function InteractionMap({ current, contacts, selectedId, sending, onSelect }) {
+function InteractionMap({ current, contacts, selectedId, sending, messages, onSelect }) {
   const shown = contacts.slice(0, 6);
-  const points = shown.map((contact, index) => ({
-    ...contact,
-    x: 350,
-    y: 42 + index * (236 / Math.max(shown.length - 1, 1)),
-  }));
+  const points = shown.map((contact, index) => {
+    const angle = shown.length === 1 ? 0 : (index * 2 * Math.PI) / shown.length;
+    return {
+      ...contact,
+      x: 215 + 145 * Math.cos(angle),
+      y: 160 + 100 * Math.sin(angle),
+    };
+  });
   const active = points.find((point) => point.id === selectedId);
+  const connectedIds = new Set(messages.flatMap((message) => [message.source_id, message.target_id]));
 
   return (
     <div className="map-card">
@@ -57,25 +61,25 @@ function InteractionMap({ current, contacts, selectedId, sending, onSelect }) {
         <defs>
           <filter id="glow"><feGaussianBlur stdDeviation="4" result="blur"/><feMerge><feMergeNode in="blur"/><feMergeNode in="SourceGraphic"/></feMerge></filter>
         </defs>
-        {points.map((point) => (
+        {points.filter((point) => connectedIds.has(point.id)).map((point) => (
           <g key={point.id} className={point.id === selectedId ? "map-edge active" : "map-edge"}>
-            <line x1="104" y1="160" x2={point.x - 31} y2={point.y} />
+            <line x1="215" y1="160" x2={point.x} y2={point.y} />
           </g>
         ))}
         {sending && active && (
           <circle key={sending} r="6" className="packet" filter="url(#glow)">
-            <animate attributeName="cx" from="104" to={active.x - 31} dur="0.7s" repeatCount="indefinite" />
+            <animate attributeName="cx" from="215" to={active.x} dur="0.7s" repeatCount="indefinite" />
             <animate attributeName="cy" from="160" to={active.y} dur="0.7s" repeatCount="indefinite" />
           </circle>
         )}
-        <g className="map-node current" transform="translate(70 160)">
+        <g className="map-node current" transform="translate(215 160)">
           <circle r="34" /><text textAnchor="middle" dy="5">{initials(current.id)}</text>
         </g>
-        <text className="map-label current-label" x="70" y="213" textAnchor="middle">{current.id}</text>
+        <text className="map-label current-label" x="215" y="211" textAnchor="middle">{current.id}</text>
         {points.map((point) => (
           <g key={point.id} onClick={() => onSelect(point.id)} className={`map-node map-contact ${point.kind} ${point.id === selectedId ? "selected" : ""}`} transform={`translate(${point.x} ${point.y})`}>
             <circle r="27" /><text textAnchor="middle" dy="5">{initials(point.id)}</text>
-            <text className="map-label" x="-38" y="5" textAnchor="end">{point.id}</text>
+            <text className="map-label" x="0" y="43" textAnchor="middle">{point.id}</text>
           </g>
         ))}
       </svg>
@@ -93,6 +97,7 @@ export default function App() {
   const [currentId, setCurrentId] = useState(requestedUser || localStorage.getItem("ark-user") || "");
   const [selectedId, setSelectedId] = useState("");
   const [messages, setMessages] = useState([]);
+  const [signalMessages, setSignalMessages] = useState([]);
   const [draft, setDraft] = useState("");
   const [sending, setSending] = useState("");
   const [error, setError] = useState("");
@@ -125,6 +130,14 @@ export default function App() {
     } catch (cause) { setError(cause.message); }
   }, [currentId, activeSelectedId, sessionId]);
 
+  const loadSignalMessages = useCallback(async () => {
+    if (!currentId) return;
+    try {
+      const params = new URLSearchParams({ participant_id: currentId });
+      setSignalMessages(await api(`/api/messages?${params}`));
+    } catch (cause) { setError(cause.message); }
+  }, [currentId]);
+
   useEffect(() => {
     const initial = window.setTimeout(loadParticipants, 0);
     return () => window.clearTimeout(initial);
@@ -137,17 +150,26 @@ export default function App() {
       window.clearInterval(timer);
     };
   }, [loadMessages]);
+  useEffect(() => {
+    const initial = window.setTimeout(loadSignalMessages, 0);
+    const timer = window.setInterval(loadSignalMessages, 2000);
+    return () => {
+      window.clearTimeout(initial);
+      window.clearInterval(timer);
+    };
+  }, [loadSignalMessages]);
   useEffect(() => { endRef.current?.scrollIntoView({ behavior: "smooth" }); }, [messages, sending]);
 
   const counts = useMemo(() => Object.fromEntries(contacts.map((contact) => [
     contact.id,
-    messages.filter((message) => message.source_id === contact.id || message.target_id === contact.id).length,
-  ])), [contacts, messages]);
+    signalMessages.filter((message) => message.source_id === contact.id || message.target_id === contact.id).length,
+  ])), [contacts, signalMessages]);
 
   const switchUser = (id) => {
     setCurrentId(id);
     setSelectedId("");
     setMessages([]);
+    setSignalMessages([]);
     localStorage.setItem("ark-user", id);
     const url = new URL(window.location);
     url.searchParams.set("user", id);
@@ -188,7 +210,7 @@ export default function App() {
           parent_event_id: messages.at(-1)?.event_id,
         }),
       });
-      await loadMessages();
+      await Promise.all([loadMessages(), loadSignalMessages()]);
     } catch (cause) {
       setDraft(content);
       setError(cause.message);
@@ -228,7 +250,7 @@ export default function App() {
         </> : <div className="empty-chat"><h3>Add another user</h3><p>Conversation needs sender and recipient.</p></div>}
       </section>
 
-      <aside className="graph-panel"><InteractionMap current={current} contacts={contacts} selectedId={activeSelectedId} sending={sending} onSelect={setSelectedId}/><div className="trace-card"><span className="eyebrow">CURRENT TRACE</span><dl><div><dt>Session</dt><dd>{selected ? sessionId : "—"}</dd></div><div><dt>Events</dt><dd>{messages.length}</dd></div><div><dt>Last transaction</dt><dd>{messages.at(-1)?.transaction_id || "—"}</dd></div></dl></div></aside>
+      <aside className="graph-panel"><InteractionMap current={current} contacts={contacts} selectedId={activeSelectedId} sending={sending} messages={signalMessages} onSelect={setSelectedId}/><div className="trace-card"><span className="eyebrow">CURRENT TRACE</span><dl><div><dt>Session</dt><dd>{selected ? sessionId : "—"}</dd></div><div><dt>Events</dt><dd>{messages.length}</dd></div><div><dt>Last transaction</dt><dd>{messages.at(-1)?.transaction_id || "—"}</dd></div></dl></div></aside>
       {error && <button className="error-toast" onClick={() => setError("")}>{error}<span><Icon name="close" size={15}/></span></button>}
     </main>
   );
