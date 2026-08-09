@@ -5,10 +5,10 @@ use std::net::SocketAddr;
 use anyhow::{Context, Result};
 use ark_core::{AgentEvent, EventType, ParticipantKind};
 use ark_ingest::EventIngestor;
-use ark_neo4j::{GraphMessage, GraphParticipant, Neo4jStore};
+use ark_neo4j::{AvatarConfig, DeletedParticipant, GraphMessage, GraphParticipant, Neo4jStore};
 use axum::{
     body::Body,
-    extract::{Query, State},
+    extract::{Path, Query, State},
     http::{header, StatusCode, Uri},
     response::{IntoResponse, Response},
     routing::get,
@@ -50,6 +50,14 @@ pub async fn serve(bind: &str, store: Neo4jStore) -> Result<()> {
             "/api/participants",
             get(list_participants).post(create_participant),
         )
+        .route(
+            "/api/participants/{id}",
+            axum::routing::delete(delete_participant),
+        )
+        .route(
+            "/api/participants/{id}/avatar",
+            axum::routing::put(update_participant_avatar),
+        )
         .route("/api/messages", get(list_messages).post(send_message))
         .fallback(static_asset)
         .with_state(AppState { store });
@@ -80,12 +88,57 @@ async fn create_participant(
     Json(request): Json<CreateParticipant>,
 ) -> Result<(StatusCode, Json<GraphParticipant>), ApiError> {
     let participant_id = required(&request.id, "participant id")?;
-    state
+    if let Some(avatar) = request.avatar {
+        validate_avatar(avatar)?;
+    }
+    let participant = state
         .store
         .upsert_participant(participant_id, request.kind)
         .await
-        .map(|participant| (StatusCode::CREATED, Json(participant)))
-        .map_err(ApiError::store)
+        .map_err(ApiError::store)?;
+    let participant = if let Some(avatar) = request.avatar {
+        state
+            .store
+            .set_participant_avatar(participant_id, avatar)
+            .await
+            .map_err(ApiError::store)?
+            .ok_or_else(|| {
+                ApiError::not_found(format!("participant `{participant_id}` was not found"))
+            })?
+    } else {
+        participant
+    };
+    Ok((StatusCode::CREATED, Json(participant)))
+}
+
+async fn update_participant_avatar(
+    State(state): State<AppState>,
+    Path(participant_id): Path<String>,
+    Json(avatar): Json<AvatarConfig>,
+) -> Result<Json<GraphParticipant>, ApiError> {
+    let participant_id = required(&participant_id, "participant id")?;
+    validate_avatar(avatar)?;
+    state
+        .store
+        .set_participant_avatar(participant_id, avatar)
+        .await
+        .map_err(ApiError::store)?
+        .map(Json)
+        .ok_or_else(|| ApiError::not_found(format!("participant `{participant_id}` was not found")))
+}
+
+async fn delete_participant(
+    State(state): State<AppState>,
+    Path(participant_id): Path<String>,
+) -> Result<Json<DeletedParticipant>, ApiError> {
+    let participant_id = required(&participant_id, "participant id")?;
+    state
+        .store
+        .delete_participant(participant_id)
+        .await
+        .map_err(ApiError::store)?
+        .map(Json)
+        .ok_or_else(|| ApiError::not_found(format!("participant `{participant_id}` was not found")))
 }
 
 async fn list_messages(
@@ -179,6 +232,8 @@ struct CreateParticipant {
     id: String,
     #[serde(default)]
     kind: ParticipantKind,
+    #[serde(default)]
+    avatar: Option<AvatarConfig>,
 }
 
 #[derive(Deserialize)]
@@ -228,6 +283,13 @@ impl ApiError {
             message: error.to_string(),
         }
     }
+
+    fn not_found(message: String) -> Self {
+        Self {
+            status: StatusCode::NOT_FOUND,
+            message,
+        }
+    }
 }
 
 impl IntoResponse for ApiError {
@@ -247,6 +309,25 @@ struct ErrorBody {
     error: String,
 }
 
+fn validate_avatar(avatar: AvatarConfig) -> Result<(), ApiError> {
+    for (name, value, limit) in [
+        ("skinTone", avatar.skin_tone, 1),
+        ("hairStyle", avatar.hair_style, 3),
+        ("hairColor", avatar.hair_color, 8),
+        ("eyeColor", avatar.eye_color, 5),
+        ("outfitColor", avatar.outfit_color, 7),
+        ("accessory", avatar.accessory, 2),
+        ("expression", avatar.expression, 2),
+    ] {
+        if value >= limit {
+            return Err(ApiError::bad_request(format!(
+                "avatar {name} must be below {limit}"
+            )));
+        }
+    }
+    Ok(())
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -260,5 +341,25 @@ mod tests {
     fn blank_values_are_rejected() {
         assert!(required("  ", "id").is_err());
         assert_eq!(non_empty(Some(" value ")), Some("value"));
+    }
+
+    #[test]
+    fn avatar_choices_are_bounded() {
+        let valid = AvatarConfig {
+            skin_tone: 0,
+            hair_style: 2,
+            hair_color: 7,
+            eye_color: 4,
+            outfit_color: 6,
+            accessory: 1,
+            expression: 1,
+        };
+        assert!(validate_avatar(valid).is_ok());
+
+        assert!(validate_avatar(AvatarConfig {
+            hair_style: 3,
+            ..valid
+        })
+        .is_err());
     }
 }
