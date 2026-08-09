@@ -26,9 +26,10 @@ http://127.0.0.1:8080/?user=<user-id>
 
 Unknown IDs from this URL are created as user participants. Choose another
 participant under Routes, then send messages. The Signal map animates delivery
-and message history refreshes from Neo4j. Its full-height illustrated port-town
-plaza keeps participants moving through open streets while preserving live
-route and event-state overlays.
+and message history refreshes from Neo4j. Its full-height illustrated Japanese
+forest onsen keeps participants moving through open paths while preserving live
+route and event-state overlays. All non-hidden connections render in expanding
+map rings; denser graphs reduce creature scale to preserve visibility.
 
 Route removal is identity-specific and local to the browser. It hides the
 route without deleting participants, events, or causal history from Neo4j.
@@ -39,11 +40,14 @@ the participant, events they sent or received, and every relationship attached
 to those nodes. Ark requires one other identity to remain so the interface can
 switch to a valid identity after deletion.
 
-Creating a user saves it immediately with a generated default look. The pencil
-beside an active user opens Identity Studio. A fixed skin tone, three short hair
-styles, hair and eye colors, outfit colors, hat choice, and neutral or smirk
-expressions update a stationary full-body preview. Choices persist as typed avatar configuration on the Neo4j
-participant and render consistently in the sidebar, chat header, and Signal map.
+Creating a user saves it immediately. Ark derives one of several original
+storybook creatures from the stable participant ID: capybara, moon-bellied
+forest guardian, or fuzzy star sprite. The same
+creature uses a thick-outlined, character-specific silhouette and renders
+consistently in the sidebar, chat header, and Signal map. Map creatures roam as
+grounded body-only silhouettes without rendered legs. Head markers identify the
+types: orange for capybara, leaf for guardian, and star for fuzzy sprite.
+Avatar editing is intentionally unavailable in the UI.
 
 Neo4j settings:
 
