@@ -1,0 +1,21 @@
+[package]
+name = "ark-web"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+rust-version.workspace = true
+
+[dependencies]
+anyhow.workspace = true
+ark-core = { path = "../ark-core" }
+ark-ingest = { path = "../ark-ingest" }
+ark-neo4j = { path = "../ark-neo4j" }
+axum.workspace = true
+mime_guess.workspace = true
+rust-embed.workspace = true
+serde.workspace = true
+tokio.workspace = true
+uuid.workspace = true
+
+[lints]
+workspace = true

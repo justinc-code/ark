@@ -1,0 +1,20 @@
+[package]
+name = "ark-cli"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+rust-version.workspace = true
+
+[[bin]]
+name = "ark"
+path = "src/main.rs"
+
+[dependencies]
+anyhow.workspace = true
+ark-neo4j = { path = "../ark-neo4j" }
+ark-web = { path = "../ark-web" }
+clap.workspace = true
+tokio.workspace = true
+
+[lints]
+workspace = true
