@@ -25,8 +25,35 @@ http://127.0.0.1:8080/?user=<user-id>
 ```
 
 Unknown IDs from this URL are created as user participants. Choose another
-participant under Routes, then send messages. The Signal map animates delivery
-and message history refreshes from Neo4j.
+participant under Participants, then send messages. The project/session rail
+groups real Neo4j conversations while the Causal descent workspace lays their
+events across participant lanes. Selecting an event exposes its immutable IDs,
+participants, trace coordinates, and explicit parent chain in the inspector.
+The conversation remains available in a collapsible lower drawer.
+
+Participants appear as deterministic walking avatars directly on the trace
+plane. Every participant identity is a capybara with a stable orange, folded
+onsen towel, or egg on its head. Each look derives from the stable participant
+ID, and new user apparel is persisted when the identity is created.
+Large traces use a scrollable event plane and comfortable or compact density
+controls rather than shrinking every event into a single viewport. A searchable
+participant list remains available as the accessible navigation path.
+The timeline reserves fixed identity slots so capybaras and other avatars stay
+visible without covering lane labels. Events use envelope markers; the selected
+message travels its actual curved sender-to-recipient path, while a live packet
+shows an in-flight request.
+
+Route removal is identity-specific and local to the browser. It hides the
+route without deleting participants, events, or causal history from Neo4j.
+Use **Restore hidden routes** in the sidebar to bring hidden routes back.
+
+Active identity deletion is permanent. Its two-step sidebar control deletes
+the participant, events they sent or received, and every relationship attached
+to those nodes. Ark requires one other identity to remain so the interface can
+switch to a valid identity after deletion.
+
+Creating a user saves it and its capybara apparel immediately. Avatar editing
+remains intentionally unavailable in the UI.
 
 Neo4j settings:
 
@@ -63,6 +90,8 @@ order. Both endpoints link to their session and transaction with
 GET  /api/health
 GET  /api/participants
 POST /api/participants
+DELETE /api/participants/<id>
+PUT /api/participants/<id>/avatar
 GET  /api/messages?participant_id=<id>&with=<id>&session_id=<id>
 POST /api/messages
 ```

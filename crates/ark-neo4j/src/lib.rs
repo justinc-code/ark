@@ -49,6 +49,21 @@ pub struct Neo4jStore {
 pub struct GraphParticipant {
     pub id: String,
     pub kind: ParticipantKind,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub avatar: Option<AvatarConfig>,
+}
+
+/// Persisted, bounded choices used to render a participant avatar.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct AvatarConfig {
+    pub skin_tone: u8,
+    pub hair_style: u8,
+    pub hair_color: u8,
+    pub eye_color: u8,
+    pub outfit_color: u8,
+    pub accessory: u8,
+    pub expression: u8,
 }
 
 /// Message projection returned without exposing Neo4j's HTTP row envelope.
@@ -65,6 +80,13 @@ pub struct GraphMessage {
     pub target_kind: Option<ParticipantKind>,
     pub content: String,
     pub timestamp_ms: i64,
+}
+
+/// Summary returned after permanently deleting one participant trace footprint.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct DeletedParticipant {
+    pub participant_id: String,
+    pub deleted_events: i64,
 }
 
 impl Neo4jStore {
@@ -109,7 +131,7 @@ impl Neo4jStore {
                  SET participant.kind = coalesce(participant.kind, $kind) \
                  FOREACH (_ IN CASE WHEN participant.kind = 'agent' THEN [1] ELSE [] END | SET participant:Agent) \
                  FOREACH (_ IN CASE WHEN participant.kind = 'user' THEN [1] ELSE [] END | SET participant:User) \
-                 RETURN participant.id, participant.kind",
+                 RETURN participant.id, participant.kind, participant.avatar_json",
                 json!({
                     "participant_id": participant_id,
                     "kind": serde_json::to_value(kind)?,
@@ -128,6 +150,7 @@ impl Neo4jStore {
         Ok(GraphParticipant {
             id: string_column(row, 0, "participant.id")?.to_owned(),
             kind: stored_kind,
+            avatar: avatar_column(row.get(2))?,
         })
     }
 
@@ -140,7 +163,7 @@ impl Neo4jStore {
         let body = self
             .execute(
                 "MATCH (participant:Participant) \
-                 RETURN participant.id, participant.kind \
+                 RETURN participant.id, participant.kind, participant.avatar_json \
                  ORDER BY participant.kind, participant.id",
                 json!({}),
             )
@@ -152,9 +175,71 @@ impl Neo4jStore {
                 Ok(GraphParticipant {
                     id: string_column(row, 0, "participant.id")?.to_owned(),
                     kind: participant_kind(row.get(1))?,
+                    avatar: avatar_column(row.get(2))?,
                 })
             })
             .collect()
+    }
+
+    /// Persist one participant's visual identity without changing graph events.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error when Neo4j rejects the update or returns malformed rows.
+    pub async fn set_participant_avatar(
+        &self,
+        participant_id: &str,
+        avatar: AvatarConfig,
+    ) -> Result<Option<GraphParticipant>, Neo4jError> {
+        let avatar_json = serde_json::to_string(&avatar)?;
+        let body = self
+            .execute(
+                "MATCH (participant:Participant {id: $participant_id}) \
+                 SET participant.avatar_json = $avatar_json \
+                 RETURN participant.id, participant.kind, participant.avatar_json",
+                json!({
+                    "participant_id": participant_id,
+                    "avatar_json": avatar_json,
+                }),
+            )
+            .await?;
+        let Some(data) = response_rows(&body)?.first() else {
+            return Ok(None);
+        };
+        let row = row_values(data)?;
+        Ok(Some(GraphParticipant {
+            id: string_column(row, 0, "participant.id")?.to_owned(),
+            kind: participant_kind(row.get(1))?,
+            avatar: avatar_column(row.get(2))?,
+        }))
+    }
+
+    /// Permanently delete a participant, events they sent or received, and all
+    /// relationships attached to those nodes.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error when Neo4j rejects the query or returns malformed rows.
+    pub async fn delete_participant(
+        &self,
+        participant_id: &str,
+    ) -> Result<Option<DeletedParticipant>, Neo4jError> {
+        let body = self
+            .execute(
+                participant_delete_cypher(),
+                json!({ "participant_id": participant_id }),
+            )
+            .await?;
+        let Some(data) = response_rows(&body)?.first() else {
+            return Ok(None);
+        };
+        let row = row_values(data)?;
+        Ok(Some(DeletedParticipant {
+            participant_id: string_column(row, 0, "participant.id")?.to_owned(),
+            deleted_events: row.get(1).and_then(Value::as_i64).ok_or_else(|| {
+                Neo4jError::InvalidResponse("deleted event count is not an integer".into())
+            })?,
+        }))
     }
 
     /// Return normalized message history for one participant.
@@ -373,6 +458,16 @@ fn optional_participant_kind(value: Option<&Value>) -> Result<Option<Participant
     }
 }
 
+fn avatar_column(value: Option<&Value>) -> Result<Option<AvatarConfig>, Neo4jError> {
+    match value {
+        Some(Value::Null) | None => Ok(None),
+        Some(Value::String(value)) => serde_json::from_str(value).map(Some).map_err(Into::into),
+        Some(_) => Err(Neo4jError::InvalidResponse(
+            "participant.avatar_json is not a string".into(),
+        )),
+    }
+}
+
 fn post_json(
     url: &str,
     username: &str,
@@ -552,6 +647,22 @@ pub fn event_upsert_cypher(event_type: EventType) -> String {
     )
 }
 
+/// Build participant deletion query without interpolating user-controlled IDs.
+#[must_use]
+pub const fn participant_delete_cypher() -> &'static str {
+    "MATCH (participant:Participant {id: $participant_id}) \
+     OPTIONAL MATCH (participant)-[:EMITTED|SENT]->(outgoing:Event) \
+     WITH participant, collect(DISTINCT outgoing) AS outgoing_events \
+     OPTIONAL MATCH (incoming:Event)-[:TO]->(participant) \
+     WITH participant, outgoing_events, collect(DISTINCT incoming) AS incoming_events \
+     WITH participant, reduce(events = [], event IN outgoing_events + incoming_events | \
+         CASE WHEN event IN events THEN events ELSE events + event END) AS related_events \
+     WITH participant, related_events, size(related_events) AS deleted_events, participant.id AS participant_id \
+     FOREACH (event IN related_events | DETACH DELETE event) \
+     DETACH DELETE participant \
+     RETURN participant_id, deleted_events"
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -617,5 +728,37 @@ mod tests {
 
         assert_eq!(status, 200);
         assert_eq!(body, b"test");
+    }
+
+    #[test]
+    fn participant_delete_query_removes_related_events_and_paths() {
+        let cypher = participant_delete_cypher();
+
+        assert!(cypher.contains("$participant_id"));
+        assert!(cypher.contains("[:EMITTED|SENT]"));
+        assert!(cypher.contains("[:TO]"));
+        assert!(cypher.contains("collect(DISTINCT incoming) AS incoming_events WITH"));
+        assert!(cypher.contains("outgoing_events + incoming_events"));
+        assert!(cypher.contains("DETACH DELETE event"));
+        assert!(cypher.contains("DETACH DELETE participant"));
+    }
+
+    #[test]
+    fn avatar_config_uses_stable_camel_case_fields() {
+        let avatar = AvatarConfig {
+            skin_tone: 1,
+            hair_style: 2,
+            hair_color: 3,
+            eye_color: 4,
+            outfit_color: 5,
+            accessory: 1,
+            expression: 2,
+        };
+
+        let value = serde_json::to_value(avatar).unwrap();
+
+        assert_eq!(value["skinTone"], 1);
+        assert_eq!(value["hairStyle"], 2);
+        assert_eq!(value["outfitColor"], 5);
     }
 }
